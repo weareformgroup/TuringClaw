@@ -2,10 +2,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.qq import QQChannel
-from nanobot.channels.qq import QQConfig
+from TuringClaw.bus.events import OutboundMessage
+from TuringClaw.bus.queue import MessageBus
+from TuringClaw.channels.qq import QQChannel
+from TuringClaw.channels.qq import QQConfig
 
 
 class _FakeApi:

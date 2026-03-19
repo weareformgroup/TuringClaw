@@ -1,6 +1,6 @@
 import pytest
 
-from nanobot.agent.tools.message import MessageTool
+from TuringClaw.agent.tools.message import MessageTool
 
 
 @pytest.mark.asyncio

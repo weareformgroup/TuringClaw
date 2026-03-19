@@ -7,9 +7,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nanobot.bus.events import OutboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.channels.feishu import FeishuChannel, FeishuConfig
+from TuringClaw.bus.events import OutboundMessage
+from TuringClaw.bus.queue import MessageBus
+from TuringClaw.channels.feishu import FeishuChannel, FeishuConfig
 
 
 # ---------------------------------------------------------------------------
