@@ -5,11 +5,21 @@ import os, sys, threading, json, io, urllib.request
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, Text, Entry, Frame, Label, Button, Canvas, Scrollbar, StringVar
+
+# Initialize defaults
+FREE_PROVIDERS = {}
+PROVIDERS_AVAILABLE = False
+token_tracker = None
+
 try:
     from gui.providers import FREE_PROVIDERS, get_all_providers_status, TokenTracker, token_tracker
     PROVIDERS_AVAILABLE = True
 except ImportError:
-    PROVIDERS_AVAILABLE = False
+    try:
+        from providers import FREE_PROVIDERS, get_all_providers_status, TokenTracker, token_tracker
+        PROVIDERS_AVAILABLE = True
+    except ImportError:
+        PROVIDERS_AVAILABLE = False
 def load_ct_logo():
     try:
         from PIL import Image
@@ -159,40 +169,30 @@ class App:
         self.msg("You", msg)
         self.msg("TuringClaw", "Thinking...")
         # Pass current provider/model state to _proc to avoid race conditions
-        print(f"[DEBUG send] provider={self.provider}, model={self.model}, demo={self.demo}")
         threading.Thread(target=self._proc, args=(msg, self.provider, self.model, self.demo), daemon=True).start()
     def _proc(self, msg, provider=None, model=None, demo=True):
         try:
             r = ""
-            print(f"[DEBUG _proc] received: provider={provider}, model={model}, demo={demo}")
             # Use passed parameters instead of self.provider to avoid race conditions
             if provider is None:
                 provider = self.provider
-                print(f"[DEBUG _proc] provider was None, using self.provider={provider}")
             if model is None:
                 model = self.model
-                print(f"[DEBUG _proc] model was None, using self.model={model}")
             
-            print(f"[DEBUG _proc] final: provider={provider}, model={model}")
             if provider and provider.name == "ollama":
-                print(f"[DEBUG _proc] Using Ollama")
                 if not self.ollama.check() or not self.ollama.models:
                     r = "Ollama not running.\n\nInstall: https://ollama.com/download/windows\nThen run: ollama serve"
                 else:
                     m = model or self.ollama.models[0]
-                    print(f"[DEBUG _proc] Calling ollama.chat with model={m}")
                     r = self.ollama.chat(m, msg)
                     if PROVIDERS_AVAILABLE and token_tracker:
                         token_tracker.record_usage("ollama", len(msg)//4, len(r)//4)
             elif provider:
-                print(f"[DEBUG _proc] Using provider {provider.display_name}")
                 r = "[" + provider.display_name + "]\n\nComing soon. Only Ollama is fully supported."
             else:
-                print(f"[DEBUG _proc] Using demo mode")
                 r = self._demo(msg)
             self.root.after(0, lambda: (self.rm_thinking(), self.msg("TuringClaw", r)))
         except Exception as ex:
-            print(f"[ERROR _proc] {ex}")
             self.root.after(0, lambda: (self.rm_thinking(), self.msg("TuringClaw", "Error: " + str(ex))))
     def _demo(self, msg):
         m = msg.lower()
@@ -252,7 +252,7 @@ class App:
             bf.pack(anchor="w", padx=14, pady=(4, 12))
             Button(bf, text="Use Ollama", font=("Consolas", 10, "bold"), bg=self.C["green"], fg="#1e1e2e",
                    bd=0, relief="flat", padx=20, pady=6, cursor="hand2",
-                   command=lambda m=mv.get(), p=pop: self._use_ollama(m, p)).pack(side="left")
+                   command=lambda p=pop: self._use_ollama(mv.get(), p)).pack(side="left")
         else:
             s = Frame(o, bg=self.C["bgl"])
             s.pack(fill="x", padx=14, pady=4)
@@ -280,22 +280,30 @@ class App:
     def _use_ollama(self, model, pop):
         if not model:
             return
-        print(f"[DEBUG _use_ollama] Called with model={model}")
-        if PROVIDERS_AVAILABLE:
-            self.provider = list(FREE_PROVIDERS.values())[0]
-            print(f"[DEBUG _use_ollama] Set self.provider={self.provider.name}")
+        
+        if not PROVIDERS_AVAILABLE or not FREE_PROVIDERS:
+            messagebox.showerror("Error", "Providers not available")
+            return
+        
+        # Set Ollama provider
+        try:
+            self.provider = FREE_PROVIDERS.get("ollama")
+            if not self.provider:
+                self.provider = list(FREE_PROVIDERS.values())[0]
+        except Exception as e:
+            messagebox.showerror("Error", "Failed to set provider: " + str(e))
+            return
+        
         self.model = model
         self.demo = False
-        print(f"[DEBUG _use_ollama] Set self.model={model}, self.demo=False")
+        
         self.status.config(text="Ollama (" + model + ")", fg=self.C["green"])
         self.rm_thinking()
         self.msg("System", "Connected to Ollama: " + model + ". Start chatting!")
         try:
             pop.destroy()
-            print(f"[DEBUG _use_ollama] Destroyed pop window")
-        except Exception as e:
-            print(f"[DEBUG _use_ollama] Error destroying pop: {e}")
-        print(f"[DEBUG _use_ollama] Final state: provider={self.provider}, model={self.model}, demo={self.demo}")
+        except Exception:
+            pass
     def _make_card(self, parent, provider, pop):
         c = Frame(parent, bg=self.C["bgl"])
         c.pack(fill="x", padx=10, pady=4)
