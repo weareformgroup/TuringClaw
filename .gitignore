@@ -1,25 +1,55 @@
-.worktrees/
-.assets
-.docs
-.env
-*.pyc
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# TuringClaw runtime data
+.TuringClaw/
+*.log
+token_usage.json
+api_keys.json
+
+# Temporary debug / build scripts (underscore prefix)
+_*.py
+_*.bat
+_*.ps1
+_*.sh
+_*.txt
+
+# Build artifacts
 dist/
 build/
-*.egg-info/
-*.egg
-*.pycs
-*.pyo
-*.pyd
-*.pyw
-*.pyz
-*.pywz
-*.pyzz
-.venv/
-venv/
-__pycache__/
-poetry.lock
-.pytest_cache/
-botpy.log
-nano.*.save
-.DS_Store
-uv.lock
+packages/
+ct_icons/
+*.spec
+
+# Misc dev scripts (root level only)
+/check_*.py
+/check_*.bat
+/list_files.py
+/make_icons.py
+/read_report.py
+/package.py
+/build.py
+/install_deps.bat
+/build_windows.ps1
+/start_gui.sh
+/start_gui.bat
+/test_token.py

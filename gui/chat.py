@@ -20,6 +20,21 @@ except ImportError:
         PROVIDERS_AVAILABLE = True
     except ImportError:
         PROVIDERS_AVAILABLE = False
+
+# Privacy Router - 三级隐私路由
+privacy_router = None
+privacy_audit_logger = None
+try:
+    from gui.privacy_router import PrivacyRouter, PrivacyAuditLogger
+    privacy_router = PrivacyRouter()
+    privacy_audit_logger = PrivacyAuditLogger()
+except ImportError:
+    try:
+        from privacy_router import PrivacyRouter, PrivacyAuditLogger
+        privacy_router = PrivacyRouter()
+        privacy_audit_logger = PrivacyAuditLogger()
+    except ImportError:
+        pass
 def load_ct_logo():
     try:
         from PIL import Image
@@ -81,6 +96,7 @@ class App:
         self.demo = True
         self.provider = None
         self.model = None
+        self.privacy_level = "S1"  # 当前安全级别 S1/S2/S3
         self.ollama = OllamaClient()
         self.logos = load_ct_logo()
         self.C = {"bg": "#1e1e2e", "bgl": "#313244", "fg": "#cdd6f4", "dim": "#a6adc8",
@@ -109,6 +125,9 @@ class App:
                cursor="hand2", command=self.show_menu).pack(side="left", padx=12)
         self.status = Label(t, text="Demo Mode", font=("Consolas", 10), bg=self.C["bgl"], fg=self.C["green"])
         self.status.pack(side="left", padx=8)
+        # 安全级别指示器
+        self.privacy_label = Label(t, text="🟢 S1", font=("Consolas", 10, "bold"), bg=self.C["bgl"], fg=self.C["green"])
+        self.privacy_label.pack(side="left", padx=8)
         b4 = Button(t, text="Usage", font=("Consolas", 10), bg=self.C["bgl"], fg=self.C["fg"],
                     bd=0, relief="flat", padx=12, cursor="hand2", command=self.show_usage)
         b4.pack(side="right", padx=8)
@@ -145,6 +164,16 @@ class App:
                bd=0, relief="flat", padx=20, pady=8, cursor="hand2", command=self.send).pack(side="right", padx=(10, 0))
         self.msg("System", "TuringClaw Ready. Click 'Select AI Provider' to configure Ollama or cloud AI.")
         self.root.bind("<Escape>", lambda e: self.root.quit())
+    
+    def _update_privacy_label(self, level: str):
+        """更新安全级别状态指示器"""
+        if level == "S1":
+            self.privacy_label.config(text="🟢 S1", fg=self.C["green"])
+        elif level == "S2":
+            self.privacy_label.config(text="🟡 S2", fg=self.C["yellow"])
+        elif level == "S3":
+            self.privacy_label.config(text="🔴 S3", fg=self.C["red"])
+    
     def msg(self, sender, text, color=None):
         self.chat.config(state="normal")
         if color is None:
@@ -179,14 +208,42 @@ class App:
             if model is None:
                 model = self.model
             
+            # ========== 隐私路由 ==========
+            actual_msg = msg
+            privacy_decision = None
+            if privacy_router:
+                privacy_decision = privacy_router.route(msg)
+                actual_msg = privacy_decision.sanitized_text
+                
+                # 更新状态栏显示安全级别
+                level = privacy_decision.level
+                self.root.after(0, lambda l=level: self._update_privacy_label(l))
+                
+                # 记录审计日志
+                if privacy_audit_logger:
+                    privacy_audit_logger.log(privacy_decision, msg)
+                
+                # S3 级别：强制使用本地模型
+                if privacy_decision.level == "S3":
+                    if not self.ollama.check() or not self.ollama.models:
+                        r = "🔒 S3 安全模式要求本地模型，但 Ollama 未运行。\n\n请安装并启动 Ollama:\nhttps://ollama.com/download\n\n然后运行: ollama serve"
+                    else:
+                        provider = FREE_PROVIDERS.get("ollama") if FREE_PROVIDERS else None
+                        model = self.ollama.models[0]
+                        demo = False
+                        self.root.after(0, lambda: self.status.config(
+                            text="🔒 Ollama (S3)", fg=self.C["green"]))
+                        self.root.after(0, lambda: self.msg("System", 
+                            f"🔒 S3 安全模式：检测到敏感数据，已自动切换到本地模型处理"))
+            
             if provider and provider.name == "ollama":
                 if not self.ollama.check() or not self.ollama.models:
                     r = "Ollama not running.\n\nInstall: https://ollama.com/download/windows\nThen run: ollama serve"
                 else:
                     m = model or self.ollama.models[0]
-                    r = self.ollama.chat(m, msg)
+                    r = self.ollama.chat(m, actual_msg)
                     if PROVIDERS_AVAILABLE and token_tracker:
-                        token_tracker.record_usage("ollama", len(msg)//4, len(r)//4)
+                        token_tracker.record_usage("ollama", len(actual_msg)//4, len(r)//4)
             elif provider:
                 r = "[" + provider.display_name + "]\n\nComing soon. Only Ollama is fully supported."
             else:
@@ -401,11 +458,48 @@ class App:
     def show_settings(self):
         pop = tk.Toplevel(self.root)
         pop.title("Settings")
-        pop.geometry("400x300")
+        pop.geometry("450x400")
         pop.configure(bg=self.C["bg"])
         Label(pop, text="Settings", font=("Consolas", 14, "bold"), bg=self.C["bg"], fg=self.C["fg"]).pack(pady=15)
-        Label(pop, text="TuringClaw v0.2.0\nChina Telecom AI\nPowered by Ollama",
-              font=("Consolas", 10), bg=self.C["bg"], fg=self.C["dim"], justify="center").pack(pady=20)
+        Label(pop, text="TuringClaw v0.3.0\nChina Telecom AI\nPowered by Ollama + Privacy Router",
+              font=("Consolas", 10), bg=self.C["bg"], fg=self.C["dim"], justify="center").pack(pady=10)
+        
+        # 安全级别设置
+        Label(pop, text="─" * 40, bg=self.C["bg"], fg=self.C["dim"]).pack(pady=5)
+        Label(pop, text="🔒 Privacy Level (安全级别)", font=("Consolas", 11, "bold"),
+              bg=self.C["bg"], fg=self.C["cyan"]).pack(pady=5)
+        
+        level_frame = Frame(pop, bg=self.C["bg"])
+        level_frame.pack(pady=5)
+        
+        current_level = self.privacy_level
+        level_var = StringVar(value=current_level)
+        
+        def set_level(l):
+            self.privacy_level = l
+            if privacy_router:
+                if l == "AUTO":
+                    privacy_router.set_manual_level(None)
+                else:
+                    privacy_router.set_manual_level(l)
+            self._update_privacy_label(l if l != "AUTO" else "S1")
+            messagebox.showinfo("Privacy Level", f"安全级别已设置为: {l}")
+        
+        Radiobutton(level_frame, text="🟢 S1 正常模式", variable=level_var, value="S1",
+                    bg=self.C["bg"], fg=self.C["green"], selectcolor=self.C["bgl"],
+                    command=lambda: set_level("S1")).pack(anchor="w")
+        Radiobutton(level_frame, text="🟡 S2 脱敏模式", variable=level_var, value="S2",
+                    bg=self.C["bg"], fg=self.C["yellow"], selectcolor=self.C["bgl"],
+                    command=lambda: set_level("S2")).pack(anchor="w")
+        Radiobutton(level_frame, text="🔴 S3 安全模式 (仅本地)", variable=level_var, value="S3",
+                    bg=self.C["bg"], fg=self.C["red"], selectcolor=self.C["bgl"],
+                    command=lambda: set_level("S3")).pack(anchor="w")
+        Radiobutton(level_frame, text="⚡ 自动检测 (推荐)", variable=level_var, value="AUTO",
+                    bg=self.C["bg"], fg=self.C["cyan"], selectcolor=self.C["bgl"],
+                    command=lambda: set_level("AUTO")).pack(anchor="w")
+        
+        Label(pop, text="─" * 40, bg=self.C["bg"], fg=self.C["dim"]).pack(pady=5)
+        
         def do_reset():
             setattr(self, "demo", True)
             setattr(self, "provider", None)
