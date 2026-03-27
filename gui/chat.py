@@ -158,20 +158,27 @@ class App:
         self.inp.delete(0, "end")
         self.msg("You", msg)
         self.msg("TuringClaw", "Thinking...")
-        threading.Thread(target=self._proc, args=(msg,), daemon=True).start()
-    def _proc(self, msg):
+        # Pass current provider/model state to _proc to avoid race conditions
+        threading.Thread(target=self._proc, args=(msg, self.provider, self.model, self.demo), daemon=True).start()
+    def _proc(self, msg, provider=None, model=None, demo=True):
         try:
             r = ""
-            if self.provider and self.provider.name == "ollama":
+            # Use passed parameters instead of self.provider to avoid race conditions
+            if provider is None:
+                provider = self.provider
+            if model is None:
+                model = self.model
+            
+            if provider and provider.name == "ollama":
                 if not self.ollama.check() or not self.ollama.models:
                     r = "Ollama not running.\n\nInstall: https://ollama.com/download/windows\nThen run: ollama serve"
                 else:
-                    m = self.model or self.ollama.models[0]
+                    m = model or self.ollama.models[0]
                     r = self.ollama.chat(m, msg)
                     if PROVIDERS_AVAILABLE and token_tracker:
                         token_tracker.record_usage("ollama", len(msg)//4, len(r)//4)
-            elif self.provider:
-                r = "[" + self.provider.display_name + "]\n\nComing soon. Only Ollama is fully supported."
+            elif provider:
+                r = "[" + provider.display_name + "]\n\nComing soon. Only Ollama is fully supported."
             else:
                 r = self._demo(msg)
             self.root.after(0, lambda: (self.rm_thinking(), self.msg("TuringClaw", r)))
