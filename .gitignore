@@ -1,0 +1,17 @@
+﻿__pycache__/
+*.pyc
+*.pyo
+dist/
+build/
+*.spec
+_archive/
+*.exe
+.env
+api_keys.json
+token_usage.json
+.DS_Store
+Thumbs.db
+packages/
+_build/
+*.pyc
+__pycache__/
