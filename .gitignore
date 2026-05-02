@@ -7,11 +7,14 @@ build/
 _archive/
 *.exe
 .env
+.venv/
 api_keys.json
 token_usage.json
 .DS_Store
 Thumbs.db
 packages/
 _build/
-*.pyc
-__pycache__/
+_screenshot*.png
+*.png
+*.gif
+*.jpeg
