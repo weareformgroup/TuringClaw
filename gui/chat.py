@@ -21,6 +21,30 @@ except ImportError:
     except ImportError:
         PROVIDERS_AVAILABLE = False
 
+# QClaw Bridge — 自动从 QClaw openclaw.json 提取模型配置（无需单独 API key）
+QCLAW_BRIDGE_AVAILABLE = False
+QCLAW_PROVIDERS = {}
+try:
+    from gui.qclaw_bridge import get_qclaw_providers, resolve_api_key
+    from gui.qclaw_client import QClawClient
+    QCLAW_BRIDGE_AVAILABLE = True
+except ImportError:
+    try:
+        from qclaw_bridge import get_qclaw_providers, resolve_api_key
+        from qclaw_client import QClawClient
+        QCLAW_BRIDGE_AVAILABLE = True
+    except ImportError:
+        QCLAW_BRIDGE_AVAILABLE = False
+
+if QCLAW_BRIDGE_AVAILABLE:
+    try:
+        QCLAW_PROVIDERS = get_qclaw_providers()
+        if isinstance(FREE_PROVIDERS, dict):
+            for _n, _p in QCLAW_PROVIDERS.items():
+                FREE_PROVIDERS[_n] = _p
+    except Exception as _e:
+        print(f"[WARN] QClaw bridge load failed: {_e}")
+
 # Privacy Router - 三级隐私路由
 privacy_router = None
 privacy_audit_logger = None
@@ -74,18 +98,54 @@ class OllamaClient:
         except Exception:
             return False
     def chat(self, model, msg):
+        """Non-streaming chat (fallback)"""
         try:
             req = urllib.request.Request("http://localhost:11434/api/chat",
                 data=json.dumps({"model": model, "messages": [{"role": "user", "content": msg}], "stream": False}).encode(),
                 headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=180) as r:
                 data = r.read().decode().strip()
-                # Handle potential multiple JSON responses
                 lines = data.split('\n')
                 first_json = lines[0] if lines else data
                 return json.loads(first_json).get("message", {}).get("content", "")
         except Exception as e:
             return "Error: " + str(e)
+
+    def chat_stream(self, model, msg, on_chunk, on_done, on_error):
+        """Streaming chat — calls on_chunk(text) per token, on_done() when finished."""
+        try:
+            req = urllib.request.Request("http://localhost:11434/api/chat",
+                data=json.dumps({
+                    "model": model,
+                    "messages": [{"role": "user", "content": msg}],
+                    "stream": True
+                }).encode(),
+                headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=300) as r:
+                buf = ""
+                while True:
+                    raw = r.read(1024)
+                    if not raw:
+                        break
+                    buf += raw.decode("utf-8", errors="replace")
+                    while "\n" in buf:
+                        line, buf = buf.split("\n", 1)
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            obj = json.loads(line)
+                            text = obj.get("message", {}).get("content", "")
+                            if text:
+                                on_chunk(text)
+                            if obj.get("done"):
+                                on_done()
+                                return
+                        except json.JSONDecodeError:
+                            continue
+            on_done()
+        except Exception as e:
+            on_error(str(e))
 
 class App:
     def __init__(self, root):
@@ -108,6 +168,7 @@ class App:
         if self.ollama.models:
             print("[OK] Ollama: " + str(self.ollama.models))
     def setup_ui(self):
+        # ========== 1. Top Toolbar ==========
         t = Frame(self.root, bg=self.C["bgl"], height=56)
         t.pack(fill="x")
         t.pack_propagate(False)
@@ -140,8 +201,31 @@ class App:
         if self.logos and "purple" in self.logos:
             b5.config(image=self.logos["purple"])
             b5.image = self.logos["purple"]
+
+        # ========== 2. Input Bar (TOP, right below toolbar) ==========
+        inp_frame = Frame(self.root, bg=self.C["cyan"], bd=0)
+        inp_frame.pack(fill="x", padx=14, pady=(10, 0))
+        inp_inner = Frame(inp_frame, bg="#2a2a3c")
+        inp_inner.pack(fill="x", padx=2, pady=2)
+        lbl = Label(inp_inner, text=">", font=("Consolas", 16, "bold"), bg="#2a2a3c", fg=self.C["cyan"])
+        lbl.pack(side="left", padx=(8, 6), pady=8)
+        self.inp = Entry(inp_inner, font=("Consolas", 13), bg="#2a2a3c", fg="#cdd6f4",
+                        insertbackground=self.C["cyan"], bd=0, relief="flat",
+                        highlightthickness=0)
+        self.inp.pack(side="left", fill="x", expand=True, ipady=10, pady=8)
+        self.inp.insert(0, "在此输入消息…")
+        self.inp.config(fg=self.C["dim"])
+        self.inp.bind("<Return>", self.send)
+        self.inp.bind("<KP_Enter>", self.send)
+        self.inp.bind("<FocusIn>", self._on_inp_focus_in)
+        self.inp.bind("<FocusOut>", self._on_inp_focus_out)
+        btn = Button(inp_inner, text="发送", font=("Consolas", 12, "bold"), bg=self.C["cyan"], fg="#1e1e2e",
+                     bd=0, relief="flat", padx=24, pady=8, cursor="hand2", command=self.send)
+        btn.pack(side="right", padx=(8, 8), pady=8)
+
+        # ========== 3. Chat Area (fills remaining space below input) ==========
         cf = Frame(self.root, bg=self.C["bg"])
-        cf.pack(fill="both", expand=True, padx=14, pady=14)
+        cf.pack(fill="both", expand=True, padx=14, pady=10)
         cf.grid_rowconfigure(0, weight=1)
         cf.grid_columnconfigure(0, weight=1)
         self.chat = Text(cf, wrap="word", font=("Consolas", 11), bg="#181825",
@@ -151,17 +235,6 @@ class App:
         sb = Scrollbar(cf, command=self.chat.yview)
         sb.grid(row=0, column=1, sticky="ns")
         self.chat.config(yscrollcommand=sb.set)
-        inp = Frame(self.root, bg=self.C["bg"])
-        inp.pack(fill="x", padx=14, pady=(0, 14))
-        self.inp = Entry(inp, font=("Consolas", 12), bg=self.C["bgl"], fg=self.C["fg"],
-                        insertbackground=self.C["fg"], bd=0, relief="flat",
-                        highlightthickness=1, highlightcolor=self.C["cyan"], highlightbackground="#45475a")
-        self.inp.pack(side="left", fill="x", expand=True)
-        self.inp.bind("<Return>", self.send)
-        self.inp.bind("<KP_Enter>", self.send)
-        self.inp.focus()
-        Button(inp, text="Send", font=("Consolas", 11, "bold"), bg=self.C["cyan"], fg="#1e1e2e",
-               bd=0, relief="flat", padx=20, pady=8, cursor="hand2", command=self.send).pack(side="right", padx=(10, 0))
         self.msg("System", "TuringClaw Ready. Click 'Select AI Provider' to configure Ollama or cloud AI.")
         self.root.bind("<Escape>", lambda e: self.root.quit())
     
@@ -183,6 +256,30 @@ class App:
         self.chat.insert("end", text + "\n")
         self.chat.see("end")
         self.chat.config(state="disabled")
+
+    def msg_stream_start(self, sender):
+        """Initialize streaming message area (replaces Thinking...)"""
+        self.chat.config(state="normal")
+        self.rm_thinking()
+        color = self.C["green"] if sender == "TuringClaw" else self.C["blue"]
+        self.chat.insert("end", "\n" + sender + ":\n", "t")
+        self.chat.tag_config("t", foreground=color, font=("Consolas", 11, "bold"))
+        self.chat.see("end")
+        self.chat.config(state="disabled")
+
+    def msg_stream_chunk(self, text):
+        """Append a chunk to the current streaming message"""
+        self.chat.config(state="normal")
+        self.chat.insert("end", text)
+        self.chat.see("end")
+        self.chat.config(state="disabled")
+
+    def msg_stream_end(self):
+        """Finalize streaming message"""
+        self.chat.config(state="normal")
+        self.chat.insert("end", "\n")
+        self.chat.see("end")
+        self.chat.config(state="disabled")
     def rm_thinking(self):
         self.chat.config(state="normal")
         for p in ["Thinking...", "Thinking"]:
@@ -190,11 +287,24 @@ class App:
             if i:
                 self.chat.delete(i, "end")
         self.chat.config(state="disabled")
+    def _on_inp_focus_in(self, e=None):
+        if self.inp.get() == "Type your message here...":
+            self.inp.delete(0, "end")
+            self.inp.config(fg=self.C["fg"])
+
+    def _on_inp_focus_out(self, e=None):
+        if not self.inp.get().strip():
+            self.inp.insert(0, "Type your message here...")
+            self.inp.config(fg=self.C["dim"])
+
     def send(self, e=None):
         msg = self.inp.get().strip()
-        if not msg:
+        if not msg or msg == "Type your message here...":
+            self.inp.delete(0, "end")
             return
         self.inp.delete(0, "end")
+        self.inp.config(fg=self.C["dim"])
+        self.inp.insert(0, "Type your message here...")
         self.msg("You", msg)
         self.msg("TuringClaw", "Thinking...")
         # Pass current provider/model state to _proc to avoid race conditions
@@ -239,16 +349,57 @@ class App:
             if provider and provider.name == "ollama":
                 if not self.ollama.check() or not self.ollama.models:
                     r = "Ollama not running.\n\nInstall: https://ollama.com/download/windows\nThen run: ollama serve"
+                    self.root.after(0, lambda: (self.rm_thinking(), self.msg("TuringClaw", r)))
                 else:
                     m = model or self.ollama.models[0]
-                    r = self.ollama.chat(m, actual_msg)
-                    if PROVIDERS_AVAILABLE and token_tracker:
-                        token_tracker.record_usage("ollama", len(actual_msg)//4, len(r)//4)
+                    # Streaming output with typewriter effect
+                    self.root.after(0, lambda: self.msg_stream_start("TuringClaw"))
+                    _out_chars = [0]
+                    def _on_chunk(text):
+                        _out_chars[0] += len(text)
+                        self.root.after(0, lambda t=text: self.msg_stream_chunk(t))
+                    def _on_done():
+                        if PROVIDERS_AVAILABLE and token_tracker:
+                            token_tracker.record_usage("ollama", len(actual_msg)//4, _out_chars[0]//4)
+                        self.root.after(0, self.msg_stream_end)
+                    def _on_err(e):
+                        self.root.after(0, lambda: (self.rm_thinking(), self.msg("TuringClaw", "Error: " + e)))
+                    self.ollama.chat_stream(m, actual_msg, _on_chunk, _on_done, _on_err)
             elif provider:
-                r = "[" + provider.display_name + "]\n\nComing soon. Only Ollama is fully supported."
+                # Phase: QClaw Bridge — 用 QClaw 模型池（MiniMax 云端 / Ollama 本地）
+                if QCLAW_BRIDGE_AVAILABLE and getattr(provider, "api_base_url", ""):
+                    api_key = resolve_api_key(provider)
+                    if not api_key:
+                        r = "[" + provider.display_name + "]\n\n未找到 API Key。请检查 QClaw 配置。"
+                        self.root.after(0, lambda: (self.rm_thinking(), self.msg("TuringClaw", r)))
+                        return
+                    m = model or provider.default_model or (provider.models[0] if provider.models else None)
+                    if not m:
+                        r = "[" + provider.display_name + "]\n\n未配置默认模型。"
+                        self.root.after(0, lambda: (self.rm_thinking(), self.msg("TuringClaw", r)))
+                        return
+                    client = QClawClient(api_key=api_key, api_base=provider.api_base_url)
+                    self.root.after(0, lambda: self.msg_stream_start("AI"))
+                    context_messages = self.history_manager.get_recent_messages(n=10) if hasattr(self, "history_manager") else []
+                    context_messages.append({"role": "user", "content": actual_msg})
+                    _out = [""]
+                    def _on_chunk(text):
+                        if text:
+                            _out[0] += text
+                            self.root.after(0, lambda t=text: self.msg_stream_chunk(t))
+                    def _on_done():
+                        if PROVIDERS_AVAILABLE and token_tracker:
+                            token_tracker.record_usage(provider.name, len(actual_msg)//4, len(_out[0])//4)
+                        self.root.after(0, self.msg_stream_end)
+                    def _on_err(e):
+                        self.root.after(0, lambda: (self.rm_thinking(), self.msg("TuringClaw", "[QClaw] 错误：" + e)))
+                    client.chat_stream(m, context_messages, _on_chunk, _on_done, _on_err)
+                else:
+                    r = "[" + provider.display_name + "]\n\nComing soon. Only Ollama is fully supported."
+                    self.root.after(0, lambda: (self.rm_thinking(), self.msg("TuringClaw", r)))
             else:
                 r = self._demo(msg)
-            self.root.after(0, lambda: (self.rm_thinking(), self.msg("TuringClaw", r)))
+                self.root.after(0, lambda: (self.rm_thinking(), self.msg("TuringClaw", r)))
         except Exception as ex:
             self.root.after(0, lambda: (self.rm_thinking(), self.msg("TuringClaw", "Error: " + str(ex))))
     def _demo(self, msg):
@@ -330,37 +481,55 @@ class App:
             for n, p in get_all_providers_status().items():
                 if n != "ollama":
                     self._make_card(sf, p, pop)
+        # Phase: QClaw Bridge — 注入 QClaw 模型池（免 API Key）
+        if QCLAW_PROVIDERS:
+            Label(sf, text="--- QClaw 桥接 (免 Key) ---", bg=self.C["bg"],
+                  fg=self.C["cyan"], font=("Consolas", 10, "bold")).pack(pady=(10, 5))
+            for _n, _p in QCLAW_PROVIDERS.items():
+                self._make_card(sf, _p, pop)
         cv.pack(side="left", fill="both", expand=True, padx=(14, 0), pady=10)
         sc.pack(side="right", fill="y", pady=10, padx=(0, 14))
+        def _close_menu():
+            try: pop.grab_release()
+            except Exception: pass
+            pop.destroy()
+            self.root.after(50, self.inp.focus_set)
         Button(pop, text="Close", font=("Consolas", 10), bg=self.C["bgl"], fg=self.C["fg"],
-               bd=0, relief="flat", padx=20, pady=5, command=pop.destroy).pack(pady=10)
+               bd=0, relief="flat", padx=20, pady=5, command=_close_menu).pack(pady=10)
     def _use_ollama(self, model, pop):
         if not model:
             return
-        
-        if not PROVIDERS_AVAILABLE or not FREE_PROVIDERS:
-            messagebox.showerror("Error", "Providers not available")
-            return
-        
-        # Set Ollama provider
+        # Set Ollama provider (works even without providers.py module)
         try:
-            self.provider = FREE_PROVIDERS.get("ollama")
-            if not self.provider:
-                self.provider = list(FREE_PROVIDERS.values())[0]
+            if PROVIDERS_AVAILABLE and FREE_PROVIDERS.get("ollama"):
+                self.provider = FREE_PROVIDERS["ollama"]
+            else:
+                # Fallback: create a minimal ProviderInfo so _proc recognizes it
+                try:
+                    from gui.providers import ProviderInfo
+                except ImportError:
+                    try:
+                        from providers import ProviderInfo
+                    except ImportError:
+                        class ProviderInfo:
+                            def __init__(self, **kw):
+                                for k, v in kw.items():
+                                    setattr(self, k, v)
+                self.provider = ProviderInfo(
+                    name="ollama", display_name="Ollama",
+                    api_key_env="OLLAMA_API_KEY", is_local=True, status="configured")
         except Exception as e:
             messagebox.showerror("Error", "Failed to set provider: " + str(e))
             return
-        
         self.model = model
         self.demo = False
-        
         self.status.config(text="Ollama (" + model + ")", fg=self.C["green"])
         self.rm_thinking()
         self.msg("System", "Connected to Ollama: " + model + ". Start chatting!")
-        try:
-            pop.destroy()
-        except Exception:
-            pass
+        try: pop.grab_release()
+        except Exception: pass
+        pop.destroy()
+        self.root.after(50, self.inp.focus_set)
     def _make_card(self, parent, provider, pop):
         c = Frame(parent, bg=self.C["bgl"])
         c.pack(fill="x", padx=10, pady=4)
@@ -371,12 +540,29 @@ class App:
         bf = Frame(c, bg=self.C["bgl"])
         bf.pack(fill="x", padx=14, pady=(6, 10))
         if provider.status == "configured":
+            # 模型下拉（QClaw 桥接的 provider 支持多模型选择）
+            model_var = None
+            if getattr(provider, "models", None):
+                mf = Frame(c, bg=self.C["bgl"])
+                mf.pack(fill="x", padx=14, pady=(0, 6))
+                Label(mf, text="Model:", font=("Consolas", 9), bg=self.C["bgl"], fg=self.C["fg"]).pack(side="left")
+                from tkinter import StringVar
+                model_var = StringVar(value=provider.default_model or provider.models[0])
+                cb = ttk.Combobox(mf, textvariable=model_var, values=provider.models, state="readonly", font=("Consolas", 9), width=28)
+                cb.pack(side="left", padx=6)
             def do_use():
                 setattr(self, "provider", provider)
                 setattr(self, "demo", False)
-                self.status.config(text=provider.display_name, fg=self.C["green"])
+                if model_var is not None:
+                    setattr(self, "model", model_var.get())
+                else:
+                    setattr(self, "model", getattr(provider, "default_model", ""))
+                self.status.config(text=provider.display_name + ((" (" + model_var.get() + ")") if model_var is not None else ""), fg=self.C["green"])
+                try: pop.grab_release()
+                except Exception: pass
                 pop.destroy()
                 self.msg("System", "Switched to " + provider.display_name)
+                self.root.after(50, self.inp.focus_set)
             Button(bf, text="Use", font=("Consolas", 9), bg=self.C["green"], fg="#1e1e2e",
                    bd=0, relief="flat", padx=14, pady=3, cursor="hand2", command=do_use).pack(side="left")
             Label(bf, text="Configured", font=("Consolas", 9, "bold"), bg=self.C["bgl"], fg=self.C["green"]).pack(side="right")
@@ -410,7 +596,10 @@ class App:
             ks[provider.name] = k
             f.write_text(json.dumps(ks, indent=2))
             messagebox.showinfo("Done", "API Key saved for " + provider.display_name + "!")
+            try: pop.grab_release()
+            except Exception: pass
             pop.destroy()
+            self.root.after(50, self.inp.focus_set)
     def load_keys(self):
         f = Path.home() / ".TuringClaw" / "api_keys.json"
         if not f.exists():
@@ -453,8 +642,13 @@ class App:
                       font=("Consolas", 9), bg=self.C["bgl"], fg=self.C["dim"]).pack(anchor="w", padx=14, pady=(0, 10))
             cv.pack(side="left", fill="both", expand=True, padx=(14, 0), pady=10)
             sc.pack(side="right", fill="y", pady=10, padx=(0, 14))
+        def _close_usage():
+            try: pop.grab_release()
+            except Exception: pass
+            pop.destroy()
+            self.root.after(50, self.inp.focus_set)
         Button(pop, text="Close", font=("Consolas", 10), bg=self.C["bgl"], fg=self.C["fg"],
-               bd=0, relief="flat", padx=20, pady=5, command=pop.destroy).pack(pady=10)
+               bd=0, relief="flat", padx=20, pady=5, command=_close_usage).pack(pady=10)
     def show_settings(self):
         pop = tk.Toplevel(self.root)
         pop.title("Settings")
@@ -510,8 +704,13 @@ class App:
             self.msg("System", "Switched to Demo Mode")
         Button(pop, text="Reset to Demo Mode", font=("Consolas", 10), bg=self.C["red"], fg="white",
                bd=0, relief="flat", padx=14, pady=5, cursor="hand2", command=do_reset).pack(pady=8)
+        def _close_settings():
+            try: pop.grab_release()
+            except Exception: pass
+            pop.destroy()
+            self.root.after(50, self.inp.focus_set)
         Button(pop, text="Close", font=("Consolas", 10), bg=self.C["bgl"], fg=self.C["fg"],
-               bd=0, relief="flat", padx=20, pady=5, command=pop.destroy).pack(pady=8)
+               bd=0, relief="flat", padx=20, pady=5, command=_close_settings).pack(pady=8)
 def main():
     root = tk.Tk()
     App(root)

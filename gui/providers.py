@@ -17,7 +17,10 @@ class ProviderInfo:
     name: str
     display_name: str
     api_key_env: str  # Environment variable name for API key
+    api_key: str = ""  # Direct API key (baked in, e.g. from QClaw bridge). Overrides env lookup.
     api_base_env: str = ""  # Environment variable for custom base URL
+    api_base_url: str = ""  # Direct API base URL (e.g. https://api.minimaxi.com/v1)
+    default_model: str = ""  # Default model name
     models: list = field(default_factory=list)  # Available models
     free_tier: str = ""  # Description of free tier
     signup_url: str = ""  # Signup URL
