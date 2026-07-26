@@ -39,26 +39,21 @@ def _extract_providers(cfg: dict) -> List[dict]:
     if not providers:
         return result
 
-    # Ollama 本地
-    ollama = providers.get("ollama")
-    if ollama:
-        base = ollama.get("baseUrl") or ollama.get("base_url") or "http://localhost:11434"
-        api_base = base.rstrip("/")
-        if not api_base.endswith("/v1"):
-            api_base = api_base + "/v1"
-        result.append({
-            "name": "qclaw_ollama",
-            "display_name": "Ollama (QClaw 桥接)",
-            "api_key_env": "OLLAMA_API_KEY",
-            "api_key": ollama.get("apiKey", "ollama-local"),
-            "api_base_url": api_base,
-            "models": ["qwen2.5:14b-instruct", "deepseek-r1:14b", "deepseek-r1:7b", "deepseek-r1:1.5b", "qwq:latest"],
-            "default_model": "qwen2.5:14b-instruct",
-            "free_tier": "完全免费，本地运行（经 QClaw 桥接）",
-            "signup_url": "https://ollama.com/",
-            "is_local": True,
-            "status": "configured",
-        })
+    # LM Studio 本地（GPU 加速，替代 Ollama）
+    lmstudio_url = "http://localhost:1234/v1"
+    result.append({
+        "name": "lmstudio",
+        "display_name": "LM Studio (本地 GPU)",
+        "api_key_env": "LMSTUDIO_API_KEY",
+        "api_key": "lm-studio",
+        "api_base_url": lmstudio_url,
+        "models": ["qwen2.5-1.5b-instruct"],
+        "default_model": "qwen2.5-1.5b-instruct",
+        "free_tier": "完全免费，本地 GPU 加速（RTX 3050）",
+        "signup_url": "https://lmstudio.ai/",
+        "is_local": True,
+        "status": "configured",
+    })
 
     # MiniMax 云端
     minimax = providers.get("minimax")
