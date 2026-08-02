@@ -1,6 +1,6 @@
 [project]
 name = "TuringClaw-ai"
-version = "0.1.4.post5"
+version = "2.0.0"
 description = "A lightweight personal AI assistant framework"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.11"
@@ -114,7 +114,7 @@ include = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "2.0.0"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
