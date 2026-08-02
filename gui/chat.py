@@ -45,6 +45,30 @@ if QCLAW_BRIDGE_AVAILABLE:
     except Exception as _e:
         print(f"[WARN] QClaw bridge load failed: {_e}")
 
+# BrainClient - GBrain 知识库客户端 (Phase 1 融合)
+BRAIN_CLIENT_AVAILABLE = False
+try:
+    from gui.brain_client import get_brain_client
+    BRAIN_CLIENT_AVAILABLE = True
+except ImportError:
+    try:
+        from brain_client import get_brain_client
+        BRAIN_CLIENT_AVAILABLE = True
+    except ImportError:
+        BRAIN_CLIENT_AVAILABLE = False
+
+# Phase 5: GSM Engine + Layer 3 Meta-Rules
+GSM_ENGINE_AVAILABLE = False
+LAYER3_AVAILABLE = False
+try:
+    from cognitive.gsm_engine import get_gsm_engine
+    from cognitive.layer3_metarules.rules_manager import MetaRulesManager
+    GSM_ENGINE_AVAILABLE = True
+    LAYER3_AVAILABLE = True
+except ImportError:
+    GSM_ENGINE_AVAILABLE = False
+    LAYER3_AVAILABLE = False
+
 # Privacy Router - 三级隐私路由
 privacy_router = None
 privacy_audit_logger = None
@@ -346,6 +370,38 @@ class App:
                         self.root.after(0, lambda: self.msg("System", 
                             f"🔒 S3 安全模式：检测到敏感数据，已自动切换到本地模型处理"))
             
+            
+            # Phase 5: GSM dual-mode execution
+            if GSM_ENGINE_AVAILABLE:
+                privacy_level = "S1"
+                if privacy_decision:
+                    privacy_level = privacy_decision.level
+                gsm_result = get_gsm_engine().process_message(
+                    message=actual_msg,
+                    task_executor=self._gsm_task_executor,
+                    privacy_level=privacy_level,
+                    user_online=True,
+                    on_progress=lambda p: self.root.after(0, lambda: self.msg("GSM", p)),
+                )
+                if gsm_result["mode"] == "goal":
+                    self.root.after(0, lambda: (
+                        self.rm_thinking(),
+                        self.msg("TuringClaw", f"[目标模式 Level {gsm_result['level']}]\n\n{gsm_result['summary']}")
+                    ))
+                    return
+                if gsm_result["mode"] == "blocked":
+                    self.root.after(0, lambda: (
+                        self.rm_thinking(),
+                        self.msg("TuringClaw", f"[操作被拦截] {gsm_result.get('message', '')}")
+                    ))
+                    return
+                if gsm_result["mode"] == "needs_confirm":
+                    self.root.after(0, lambda: (
+                        self.rm_thinking(),
+                        self.msg("TuringClaw", f"[需要确认] {gsm_result.get('message', '')}")
+                    ))
+                    return
+            
             if provider and provider.name == "ollama":
                 if not self.ollama.check() or not self.ollama.models:
                     r = "Ollama not running.\n\nInstall: https://ollama.com/download/windows\nThen run: ollama serve"
@@ -382,6 +438,26 @@ class App:
                     self.root.after(0, lambda: self.msg_stream_start("AI"))
                     context_messages = self.history_manager.get_recent_messages(n=10) if hasattr(self, "history_manager") else []
                     context_messages.append({"role": "user", "content": actual_msg})
+
+                    # Phase 5: Layer 3 meta-rules injection
+                    if LAYER3_AVAILABLE:
+                        try:
+                            _mr = MetaRulesManager()
+                            rules_text = _mr.get_rules_for_prompt(actual_msg)
+                            if rules_text:
+                                context_messages.insert(0, {"role": "system", "content": rules_text})
+                        except Exception:
+                            pass
+
+                    # Phase 1: GBrain knowledge injection
+                    if BRAIN_CLIENT_AVAILABLE:
+                        try:
+                            brain_client = get_brain_client()
+                            brain_context = brain_client.build_context_knowledge(actual_msg)
+                            if brain_context:
+                                context_messages.insert(0, {"role": "system", "content": brain_context})
+                        except Exception:
+                            pass
                     _out = [""]
                     def _on_chunk(text):
                         if text:
@@ -402,6 +478,37 @@ class App:
                 self.root.after(0, lambda: (self.rm_thinking(), self.msg("TuringClaw", r)))
         except Exception as ex:
             self.root.after(0, lambda: (self.rm_thinking(), self.msg("TuringClaw", "Error: " + str(ex))))
+    def _gsm_task_executor(self, task_id, description):
+        """GSM goal-mode atomic task executor.
+        Reuses QClawClient to handle each task via the QClaw bridge.
+        Runs in the _proc worker thread (not UI thread), so blocking is OK.
+        """
+        try:
+            if not QCLAW_BRIDGE_AVAILABLE:
+                return False, "", "QClaw bridge not available"
+            provider = self.provider
+            if not provider or not getattr(provider, "api_base_url", ""):
+                # fallback: use first QClaw provider
+                for _n, _p in QCLAW_PROVIDERS.items():
+                    provider = _p
+                    break
+            if not provider:
+                return False, "", "no provider"
+            api_key = resolve_api_key(provider)
+            m = self.model or provider.default_model or (provider.models[0] if provider.models else None)
+            if not m:
+                return False, "", "no model"
+            client = QClawClient(api_key=api_key, api_base=provider.api_base_url)
+            messages = [
+                {"role": "system", "content": "You are TuringClaw executing a specific task. Be concise and produce concrete results."},
+                {"role": "user", "content": description},
+            ]
+            resp = client.chat(model=m, messages=messages)
+            if resp is None:
+                return False, "", "no response"
+            return True, resp, ""
+        except Exception as e:
+            return False, "", str(e)
     def _demo(self, msg):
         m = msg.lower()
         if any(w in m for w in ["hello", "hi", "hey"]):

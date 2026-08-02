@@ -1,0 +1,170 @@
+"""
+Layer 1 Skill Auto-Generator
+
+When a Layer 2 hypothesis is confirmed (posterior > 0.8, evidence >= 3),
+this module generates a SKILL.md draft based on the hypothesis content
+and related Layer 4 intuitions.
+
+Generated skills are written to ~/.TuringClaw/skills/auto_generated/
+and can be injected into the Agent's context.
+"""
+from __future__ import annotations
+import json, os, re
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Optional
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _today() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+class SkillGenerator:
+    """Generates Layer 1 Skill drafts from confirmed Layer 2 hypotheses."""
+
+    CONFIDENCE_THRESHOLD = 0.8
+    EVIDENCE_THRESHOLD = 3
+
+    def __init__(self, skills_dir: str | Path | None = None):
+        if skills_dir is None:
+            skills_dir = Path.home() / ".TuringClaw" / "skills" / "auto_generated"
+        self.skills_dir = Path(skills_dir)
+        self.skills_dir.mkdir(parents=True, exist_ok=True)
+        self.registry_path = self.skills_dir / "_registry.json"
+        self._registry = self._load_registry()
+
+    def _load_registry(self) -> dict[str, Any]:
+        if self.registry_path.exists():
+            try:
+                return json.loads(self.registry_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass
+        return {"skills": [], "last_updated": _utc_now_iso()}
+
+    def _save_registry(self) -> None:
+        self._registry["last_updated"] = _utc_now_iso()
+        self.registry_path.write_text(
+            json.dumps(self._registry, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    def try_generate(
+        self,
+        hypothesis: dict[str, Any],
+        intuitions: list[dict[str, Any]],
+    ) -> Optional[dict[str, Any]]:
+        """
+        Attempt to generate a Skill from a confirmed hypothesis.
+        Returns the skill metadata if generated, None otherwise.
+        """
+        confidence = hypothesis.get("posterior", 0)
+        evidence = hypothesis.get("evidence_count", 0)
+
+        if confidence < self.CONFIDENCE_THRESHOLD or evidence < self.EVIDENCE_THRESHOLD:
+            return None
+
+        # Check if already generated
+        hyp_id = hypothesis.get("id", "")
+        existing = [s for s in self._registry["skills"] if s.get("source_hypothesis") == hyp_id]
+        if existing:
+            return existing[0]
+
+        # Generate skill
+        skill_name = self._infer_skill_name(hypothesis, intuitions)
+        skill_content = self._generate_content(hypothesis, intuitions)
+        skill_path = self.skills_dir / f"{skill_name}.md"
+
+        skill_path.write_text(skill_content, encoding="utf-8")
+
+        meta = {
+            "id": f"skill_{len(self._registry['skills']) + 1:04d}",
+            "name": skill_name,
+            "path": str(skill_path),
+            "source_hypothesis": hyp_id,
+            "confidence": confidence,
+            "evidence_count": evidence,
+            "created_at": _utc_now_iso(),
+            "status": "draft",
+        }
+        self._registry["skills"].append(meta)
+        self._save_registry()
+        return meta
+
+    def _infer_skill_name(self, hypothesis: dict, intuitions: list) -> str:
+        """Infer a concise skill name from hypothesis and intuitions."""
+        trigger = hypothesis.get("trigger_pattern", "")
+        if trigger:
+            name = re.sub(r"[^a-zA-Z0-9]+", "_", trigger).strip("_").lower()
+            if name:
+                return f"auto_{name}"
+        return f"auto_skill_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    def _generate_content(self, hypothesis: dict, intuitions: list) -> str:
+        """Generate SKILL.md content from hypothesis and related intuitions."""
+        trigger = hypothesis.get("trigger_pattern", "unknown")
+        learned = hypothesis.get("learned_action", "")
+        desc = hypothesis.get("description", "")
+
+        lines = [
+            f"# Auto-Generated Skill: {trigger}",
+            "",
+            f"> Generated: {_today()}",
+            f"> Source: Layer 2 hypothesis (confidence={hypothesis.get('posterior', 0):.2f}, evidence={hypothesis.get('evidence_count', 0)})",
+            f"> Status: DRAFT (awaiting human review)",
+            "",
+            "## Trigger",
+            f"When encountering: **{trigger}**",
+            "",
+            "## Action",
+            f"{learned}" if learned else "(action to be determined)",
+            "",
+            "## Evidence",
+        ]
+
+        for i, intu in enumerate(intuitions[:5], 1):
+            lines.append(f"{i}. {intu.get('trigger', '?')}: {intu.get('learned_action', '')} (count={intu.get('evidence_count', 1)})")
+
+        lines.extend([
+            "",
+            "## Context",
+            f"{desc}" if desc else "(no description)",
+            "",
+            "---",
+            "This skill was auto-generated by TuringClaw's Layer 1 Skill Generator.",
+            "Review and refine before activating.",
+        ])
+
+        return "\n".join(lines)
+
+    def get_skills_for_prompt(self) -> str:
+        """Return all skills (draft + active) as a prompt injection string."""
+        if not self._registry["skills"]:
+            return ""
+        lines = ["[Auto-Generated Skills]"]
+        for skill in self._registry["skills"]:
+            if skill.get("status") == "active":
+                lines.append(f"- {skill['name']}: {skill.get('source_hypothesis', '?')}")
+        if len(lines) == 1:
+            for skill in self._registry["skills"][:3]:
+                lines.append(f"- [DRAFT] {skill['name']}: {skill.get('source_hypothesis', '?')}")
+        return "\n".join(lines) if len(lines) > 1 else ""
+
+    def activate(self, skill_id: str) -> bool:
+        """Activate a draft skill."""
+        for s in self._registry["skills"]:
+            if s["id"] == skill_id:
+                s["status"] = "active"
+                s["activated_at"] = _utc_now_iso()
+                self._save_registry()
+                return True
+        return False
+
+    def get_stats(self) -> dict[str, Any]:
+        total = len(self._registry["skills"])
+        active = sum(1 for s in self._registry["skills"] if s.get("status") == "active")
+        drafts = total - active
+        return {"total": total, "active": active, "drafts": drafts}
