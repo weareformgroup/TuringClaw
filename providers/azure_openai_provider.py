@@ -9,7 +9,7 @@ from urllib.parse import urljoin
 import httpx
 import json_repair
 
-from TuringClaw.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from providers.base import LLMProvider, LLMResponse, ToolCallRequest
 
 _AZURE_MSG_KEYS = frozenset({"role", "content", "tool_calls", "tool_call_id", "name"})
 

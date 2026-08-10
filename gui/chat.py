@@ -21,6 +21,17 @@ except ImportError:
     except ImportError:
         PROVIDERS_AVAILABLE = False
 
+# QClaw Bridge - 自动从 QClaw openclaw.json 提取模型配置（无需单独 API key）
+try:
+    from gui.qclaw_bridge import get_qclaw_providers, resolve_api_key
+    QCLAW_BRIDGE_AVAILABLE = True
+except ImportError:
+    try:
+        from qclaw_bridge import get_qclaw_providers, resolve_api_key
+        QCLAW_BRIDGE_AVAILABLE = True
+    except ImportError:
+        QCLAW_BRIDGE_AVAILABLE = False
+
 # QClaw Bridge: 自动注入 QClaw 的模型池（Ollama 本地 + MiniMax 云端）
 # 这样 TuringClaw 无需单独配置 API key，直接复用 QClaw 配置
 QCLAW_PROVIDERS = {}
@@ -40,17 +51,6 @@ try:
     BRIDGE_AVAILABLE = True
 except ImportError:
     BRIDGE_AVAILABLE = False
-
-# QClaw Bridge - 自动从 QClaw openclaw.json 提取模型配置（无需单独 API key）
-try:
-    from gui.qclaw_bridge import get_qclaw_providers, resolve_api_key
-    QCLAW_BRIDGE_AVAILABLE = True
-except ImportError:
-    try:
-        from qclaw_bridge import get_qclaw_providers, resolve_api_key
-        QCLAW_BRIDGE_AVAILABLE = True
-    except ImportError:
-        QCLAW_BRIDGE_AVAILABLE = False
 
 # GUI 模式记忆 (M2-4)
 try:

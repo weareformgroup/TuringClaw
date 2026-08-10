@@ -1,46 +1,63 @@
-# TuringClaw 启动脚本 — 一键启动所有服务
+# TuringClaw 启动脚本 v2 — 2026-08-10 重写
 # 用法: powershell -ExecutionPolicy Bypass -File start_turingclaw.ps1
+# 也可作为 Windows 任务计划程序的开机自启脚本
 
 $ErrorActionPreference = "Continue"
 $tcRoot = "C:\Users\Administrator\TuringClaw"
 
-# 1. 启动 LM Studio (本地 GPU 推理)
-Write-Host "[1/3] 启动 LM Studio..." -ForegroundColor Cyan
+# === 环境变量 ===
+$env:PATH = "C:\Users\Administrator\.bun\bin;$env:PATH"
+$env:CUDA_VISIBLE_DEVICES = ""
+$env:LLAMA_SERVER_BASE_URL = "http://localhost:1234/v1"
+$env:LLAMA_SERVER_API_KEY = "lm-studio"
+$env:PYTHONIOENCODING = "utf-8"
+Remove-Item Env:\OLLAMA_BASE_URL -ErrorAction SilentlyContinue
+
+# === 1. LM Studio ===
+Write-Host "[1/3] LM Studio..." -ForegroundColor Cyan
 $lmsExe = "C:\Users\Administrator\AppData\Local\lm-studio\.bundle\lms.exe"
-if(Test-Path $lmsExe){
-    & $lmsExe server start 2>&1 | Out-Null
-    Start-Sleep 2
-    try { Invoke-WebRequest -Uri "http://localhost:1234/v1/models" -TimeoutSec 5 | Out-Null; Write-Host "  [OK] LM Studio (port 1234)" -ForegroundColor Green }
-    catch { Write-Host "  [FAIL] LM Studio 未启动" -ForegroundColor Red }
-} else { Write-Host "  [SKIP] LM Studio 未安装" -ForegroundColor Yellow }
-
-# 2. 启动 GBrain (知识库)
-Write-Host "[2/3] 启动 GBrain..." -ForegroundColor Cyan
-$gbrainExe = "C:\Users\Administrator\.bun\bin\gbrain.exe"
-if(Test-Path $gbrainExe){
-    try { Invoke-WebRequest -Uri "http://localhost:8484/health" -TimeoutSec 3 | Out-Null; Write-Host "  [OK] GBrain 已在运行" -ForegroundColor Green }
+if (Test-Path $lmsExe) {
+    try { Invoke-WebRequest -Uri "http://localhost:1234/v1/models" -TimeoutSec 3 | Out-Null; Write-Host "  [OK] already running" -ForegroundColor Green }
     catch {
-        Start-Process -FilePath $gbrainExe -ArgumentList "serve", "--http", "--port", "8484" -WindowStyle Hidden
-        Start-Sleep 6
-        try { Invoke-WebRequest -Uri "http://localhost:8484/health" -TimeoutSec 5 | Out-Null; Write-Host "  [OK] GBrain (port 8484)" -ForegroundColor Green }
-        catch { Write-Host "  [FAIL] GBrain 未启动" -ForegroundColor Red }
+        & $lmsExe server start 2>&1 | Out-Null
+        Start-Sleep 3
+        try { Invoke-WebRequest -Uri "http://localhost:1234/v1/models" -TimeoutSec 5 | Out-Null; Write-Host "  [OK] started (port 1234)" -ForegroundColor Green }
+        catch { Write-Host "  [FAIL] LM Studio not responding" -ForegroundColor Red }
     }
-} else { Write-Host "  [SKIP] GBrain 未安装" -ForegroundColor Yellow }
+} else { Write-Host "  [SKIP] lms.exe not found" -ForegroundColor Yellow }
 
-# 3. 启动 TuringClaw GUI
-Write-Host "[3/3] 启动 TuringClaw GUI..." -ForegroundColor Cyan
+# === 2. GBrain ===
+Write-Host "[2/3] GBrain..." -ForegroundColor Cyan
+try { Invoke-WebRequest -Uri "http://localhost:8484/health" -TimeoutSec 3 | Out-Null; Write-Host "  [OK] already running" -ForegroundColor Green }
+catch {
+    $bunExe = "C:\Users\Administrator\.bun\bin\bun.exe"
+    if (Test-Path $bunExe) {
+        Start-Process -FilePath $bunExe `
+            -ArgumentList "C:\Users\Administrator\gbrain\src\cli.ts", "serve", "--http", "--port", "8484" `
+            -WindowStyle Hidden `
+            -WorkingDirectory "C:\Users\Administrator\gbrain"
+        Start-Sleep 8
+        try { Invoke-WebRequest -Uri "http://localhost:8484/health" -TimeoutSec 5 | Out-Null; Write-Host "  [OK] started (port 8484)" -ForegroundColor Green }
+        catch { Write-Host "  [FAIL] GBrain not responding" -ForegroundColor Red }
+    } else { Write-Host "  [SKIP] bun.exe not found" -ForegroundColor Yellow }
+}
+
+# === 3. TuringClaw GUI (optional, only if desktop session) ===
+Write-Host "[3/3] TuringClaw GUI..." -ForegroundColor Cyan
 $py = "C:\Program Files\QClaw\v0.2.35.624\resources\python\python.exe"
 $env:PYTHONPATH = $tcRoot
-$env:PYTHONIOENCODING = "utf-8"
-$env:CUDA_VISIBLE_DEVICES = ""
-$env:OLLAMA_NUM_GPU = "0"
-if(Test-Path "$tcRoot\gui\chat.py"){
-    Start-Process -FilePath $py -ArgumentList "gui/chat.py" -WorkingDirectory $tcRoot
-    Write-Host "  [OK] TuringClaw GUI 已启动" -ForegroundColor Green
-} else { Write-Host "  [FAIL] gui/chat.py 不存在" -ForegroundColor Red }
+if (Test-Path "$tcRoot\gui\chat.py") {
+    # Only start GUI if not running as SYSTEM (task scheduler) or headless
+    $sessionName = [System.Environment]::GetEnvironmentVariable("SESSIONNAME")
+    if ($sessionName -or $env:USERINTERACTIVE) {
+        Start-Process -FilePath $py -ArgumentList "gui/chat.py" -WorkingDirectory $tcRoot
+        Write-Host "  [OK] GUI started" -ForegroundColor Green
+    } else {
+        Write-Host "  [SKIP] headless/session, GUI not started" -ForegroundColor Yellow
+    }
+} else { Write-Host "  [SKIP] gui/chat.py not found" -ForegroundColor Yellow }
 
 Write-Host ""
-Write-Host "=== 启动完成 ===" -ForegroundColor Cyan
+Write-Host "=== Startup complete ===" -ForegroundColor Cyan
 Write-Host "LM Studio:  http://localhost:1234"
 Write-Host "GBrain:     http://localhost:8484"
-Write-Host "TuringClaw GUI 已打开"

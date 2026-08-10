@@ -16,8 +16,8 @@ from typing import Callable, Any, Dict, Optional, Tuple
 from dataclasses import dataclass
 from queue import Queue, Empty
 
-from TuringClaw.providers.custom_provider import CustomProvider
-from TuringClaw.providers.base import LLMResponse, ToolCallRequest
+from providers.custom_provider import CustomProvider
+from providers.base import LLMResponse, ToolCallRequest
 
 
 @dataclass

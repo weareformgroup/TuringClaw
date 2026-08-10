@@ -11,8 +11,8 @@ import litellm
 from litellm import acompletion
 from loguru import logger
 
-from TuringClaw.providers.base import LLMProvider, LLMResponse, ToolCallRequest
-from TuringClaw.providers.registry import find_by_model, find_gateway
+from providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from providers.registry import find_by_model, find_gateway
 
 # Standard chat-completion message keys.
 _ALLOWED_MSG_KEYS = frozenset({"role", "content", "tool_calls", "tool_call_id", "name", "reasoning_content"})

@@ -145,6 +145,8 @@ class ToolUsageStatsUpdater:
         tool["avg_latency_ms"] = round(prev_avg + (latency_ms - prev_avg) / n, 2)
 
         # 上下文统计
+        if "contexts" not in tool:
+            tool["contexts"] = {}
         ctx = tool["contexts"].get(context, {"calls": 0, "success": 0, "rate": 0.0})
         ctx["calls"] += 1
         if success:
@@ -154,6 +156,8 @@ class ToolUsageStatsUpdater:
 
         # 共现：上一次工具 → 当前工具
         if self._last_tool is not None:
+            if "co_occurrence" not in tools[self._last_tool]:
+                tools[self._last_tool]["co_occurrence"] = {}
             co = tools[self._last_tool]["co_occurrence"]
             co[tool_name] = co.get(tool_name, 0) + 1
             # 归一化为比率

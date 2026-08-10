@@ -5,7 +5,7 @@ from __future__ import annotations
 from importlib import import_module
 from typing import TYPE_CHECKING
 
-from TuringClaw.providers.base import LLMProvider, LLMResponse
+from providers.base import LLMProvider, LLMResponse
 
 __all__ = ["LLMProvider", "LLMResponse", "LiteLLMProvider", "OpenAICodexProvider", "AzureOpenAIProvider"]
 
@@ -16,9 +16,9 @@ _LAZY_IMPORTS = {
 }
 
 if TYPE_CHECKING:
-    from TuringClaw.providers.azure_openai_provider import AzureOpenAIProvider
-    from TuringClaw.providers.litellm_provider import LiteLLMProvider
-    from TuringClaw.providers.openai_codex_provider import OpenAICodexProvider
+    from providers.azure_openai_provider import AzureOpenAIProvider
+    from providers.litellm_provider import LiteLLMProvider
+    from providers.openai_codex_provider import OpenAICodexProvider
 
 
 def __getattr__(name: str):
