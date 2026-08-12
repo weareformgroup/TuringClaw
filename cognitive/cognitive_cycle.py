@@ -201,6 +201,36 @@ def run_cognitive_cycle():
     print(f"  Layer 2: {new_hyps} new hypotheses, {len(needs_reflection)} need reflection")
     print(f"  Linkage events: {status['linkage']['linkage_events']} total")
 
+    # Step 5.5: 导出行为规则
+    print("\n[5.5] Exporting behavior rules...")
+    approved_rules = engine.meta_rules.get_approved()
+    draft_rules = engine.meta_rules.get_drafts()
+    behavior_rules = []
+    for r in approved_rules:
+        behavior_rules.append({
+            "id": r["id"],
+            "trigger": r["trigger_pattern"],
+            "rule": r["rule_text"],
+            "confidence": r["confidence"],
+            "status": r["status"],
+            "action": "apply",
+        })
+    for r in draft_rules:
+        if r.get("confidence", 0) >= 0.8:
+            behavior_rules.append({
+                "id": r["id"],
+                "trigger": r["trigger_pattern"],
+                "rule": r["rule_text"],
+                "confidence": r["confidence"],
+                "status": "draft_high_confidence",
+                "action": "suggest",
+            })
+    rules_path = Path.home() / ".TuringClaw" / "cognitive" / "behavior_rules.json"
+    rules_path.write_text(json.dumps(behavior_rules, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"  Exported {len(behavior_rules)} rules to behavior_rules.json")
+    for r in behavior_rules:
+        print(f"    [{r['action']}] {r['trigger'][:40]}")
+
     # Step 6: 同步关键发现到 GBrain（如果可用）
     print("\n[6] Syncing key findings to GBrain...")
     try:
