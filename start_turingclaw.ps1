@@ -20,9 +20,16 @@ if (Test-Path $lmsExe) {
     try { Invoke-WebRequest -Uri "http://localhost:1234/v1/models" -TimeoutSec 3 | Out-Null; Write-Host "  [OK] already running" -ForegroundColor Green }
     catch {
         & $lmsExe server start 2>&1 | Out-Null
-        Start-Sleep 3
-        try { Invoke-WebRequest -Uri "http://localhost:1234/v1/models" -TimeoutSec 5 | Out-Null; Write-Host "  [OK] started (port 1234)" -ForegroundColor Green }
-        catch { Write-Host "  [FAIL] LM Studio not responding" -ForegroundColor Red }
+        # 等待最多 30 秒，每 5 秒检查一次
+        $maxRetries = 6
+        $started = $false
+        for ($i = 1; $i -le $maxRetries; $i++) {
+            Start-Sleep 5
+            try { Invoke-WebRequest -Uri "http://localhost:1234/v1/models" -TimeoutSec 5 | Out-Null; $started = $true; break } catch {}
+            Write-Host "  Waiting for LM Studio... ($i/$maxRetries)"
+        }
+        if ($started) { Write-Host "  [OK] started (port 1234)" -ForegroundColor Green }
+        else { Write-Host "  [FAIL] LM Studio not responding after 30s" -ForegroundColor Red }
     }
 } else { Write-Host "  [SKIP] lms.exe not found" -ForegroundColor Yellow }
 

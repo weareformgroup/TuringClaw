@@ -13,6 +13,8 @@ GSM V10 B2: 四层结晶的自组织联动。
 这是四层结晶的"自组织"特性——不需要中央控制器，各层通过事件互相触发。
 """
 from typing import Any, Optional
+import json
+from pathlib import Path
 from pathlib import Path
 from cognitive.layer4_tacit.execution_intuition import ExecutionIntuitionUpdater
 from cognitive.layer4_tacit.tool_usage_stats import ToolUsageStatsUpdater
@@ -47,6 +49,34 @@ class CrystallizationLinkage:
             self.framework = framework or FrameworkUpdater()
             self.meta_rules = meta_rules or MetaRulesManager()
         self._linkage_log: list[dict[str, Any]] = []
+        self._linkage_file: Path | None = None
+        if data_dir is not None:
+            self._linkage_file = Path(data_dir) / "linkage_log.json"
+        else:
+            self._linkage_file = Path.home() / ".TuringClaw" / "cognitive" / "linkage_log.json"
+        self._load_linkage_log()
+
+    def _load_linkage_log(self):
+        """从文件加载历史 linkage log。"""
+        if self._linkage_file and self._linkage_file.exists():
+            try:
+                data = json.loads(self._linkage_file.read_text(encoding="utf-8"))
+                if isinstance(data, list):
+                    self._linkage_log = data
+            except Exception:
+                self._linkage_log = []
+
+    def _save_linkage_log(self):
+        """持久化 linkage log 到文件。"""
+        if self._linkage_file:
+            try:
+                self._linkage_file.parent.mkdir(parents=True, exist_ok=True)
+                self._linkage_file.write_text(
+                    json.dumps(self._linkage_log, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
 
     def on_failure(self, trigger: str, failure_description: str, learned_action: str = ""):
         """
@@ -198,14 +228,27 @@ class CrystallizationLinkage:
         return generated
 
     def get_stats(self) -> dict[str, Any]:
-        return {
+        stats = {
             "linkage_events": len(self._linkage_log),
-            "l4_to_l3": sum(1 for l in self._linkage_log if l["direction"] == "L4→L3"),
-            "l4_to_l2": sum(1 for l in self._linkage_log if l["direction"] == "L4→L2"),
-            "l3_to_l2": sum(1 for l in self._linkage_log if l["direction"] == "L3→L2"),
-            "l2_to_l1": sum(1 for l in self._linkage_log if l["direction"] == "L2→L1"),
-            "l1_to_l4": sum(1 for l in self._linkage_log if l["direction"] == "L1→L4"),
+            "l4_to_l3": 0,
+            "l4_to_l2": 0,
+            "l3_to_l2": 0,
+            "l2_to_l1": 0,
+            "l1_to_l4": 0,
         }
+        for l in self._linkage_log:
+            d = l.get("direction", l.get("type", ""))
+            if d in ("L4→L3", "l4_to_l3"):
+                stats["l4_to_l3"] += 1
+            elif d in ("L4→L2", "l4_to_l2"):
+                stats["l4_to_l2"] += 1
+            elif d in ("L3→L2", "l3_to_l2"):
+                stats["l3_to_l2"] += 1
+            elif d in ("L2→L1", "l2_to_l1"):
+                stats["l2_to_l1"] += 1
+            elif d in ("L1→L4", "l1_to_l4"):
+                stats["l1_to_l4"] += 1
+        return stats
 
     def _link_to_framework(self, trigger: str, failure_desc: str, learned_action: str):
         """Layer 4 联动到 Layer 2：创建或更新假设。"""
@@ -238,8 +281,10 @@ class CrystallizationLinkage:
         return f"当遇到 '{trigger}' 时，注意：{failure_desc}"
 
     def _log_linkage(self, direction: str, description: str):
-        self._linkage_log.append({
+        entry = {
             "direction": direction,
             "description": description,
             "timestamp": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
-        })
+        }
+        self._linkage_log.append(entry)
+        self._save_linkage_log()

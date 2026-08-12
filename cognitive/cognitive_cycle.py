@@ -117,6 +117,52 @@ def run_cognitive_cycle():
 
     print(f"  New hypotheses: {new_hyps}")
 
+    # Step 4.5: 自动审批规则 (Phase 6.2)
+    print("\n[4.5] Auto-approving rules...")
+    approved_rules = linkage.auto_approve_check()
+    print(f"  Auto-approved: {len(approved_rules)} rules")
+    for r in approved_rules:
+        trigger = r.get("trigger_pattern", "")
+        print(f"    Approved: {trigger}")
+        # 联动到 Layer 2
+        linkage.on_rule_approved(r.get("id", ""))
+
+    # Step 4.6: 假设证据注入 (Phase 6.3)
+    print("\n[4.6] Injecting evidence to hypotheses...")
+    evidence_injected = 0
+    for tool_name, stats in tools.items():
+        if stats.get("deprecated"):
+            continue
+        total = stats.get("total_calls", 0)
+        success = stats.get("success_count", 0)
+        if total < 3:
+            continue
+        rate = success / total if total > 0 else 0
+        # 找到与这个工具相关的假设
+        related_hyps = framework.get_by_tag(tool_name)
+        for hyp in related_hyps:
+            if hyp.get("status") != "active":
+                continue
+            # 高成功率 → 正面证据（支持假设：工具可靠）
+            # 低成功率 → 负面证据（反对假设：工具不可靠）
+            framework.update_belief(
+                hyp["id"],
+                evidence_description=f"{tool_name} success_rate={rate:.1%} ({success}/{total})",
+                evidence_supports=(rate >= 0.7),
+                likelihood=0.7 if rate >= 0.7 else 0.4,
+            )
+            evidence_injected += 1
+            print(f"    {tool_name}: {'supports' if rate >= 0.7 else 'against'} {hyp['id']} (rate={rate:.1%})")
+    print(f"  Evidence injected: {evidence_injected}")
+
+    # Step 4.7: 检查假设确认
+    print("\n[4.7] Checking hypothesis confirmation...")
+    confirmed_hyps = framework.get_confirmed()
+    print(f"  Confirmed hypotheses: {len(confirmed_hyps)}")
+    for hyp in confirmed_hyps:
+        print(f"    Confirmed: {hyp.get('statement', '')[:60]}")
+        linkage.on_hypothesis_confirmed(hyp.get("id", ""))
+
     # Step 5: 生成认知摘要
     print("\n[5] Generating cognitive summary...")
     status = engine.status()
